@@ -11,18 +11,22 @@ per-version links will be added as releases are tagged.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-25
+
+### Added
+
+- **CodeWhale support.** `bliz` installs into `.codewhale/skills` in a project and
+  `~/.codewhale/skills` globally — the two directories CodeWhale's own
+  `docs/SKILLS.md` marks writable. Its pre-rename `~/.deepseek/skills` is a *read*
+  fallback for installations that upgraded in place, so it is not mapped as a
+  second destination: one write to the current path is read by both.
+
 ### Fixed
 
-- **The prompts laid out at 80x24 on Linux, whatever the terminal actually was.**
-  `term.size()` asks the kernel with `TIOCGWINSZ`, which is *not* the same number
-  on every POSIX target: Darwin and the BSDs pack it as
-  `_IOR('t', 104, struct winsize)` (`0x40087468`), while Linux and the other
-  `asm-generic` targets number it flatly (`0x5413`). Darwin's value was used on
-  every target, so on Linux the ioctl failed and the layout fell back to the
-  80x24 default in silence — a 100x30 prompt drew an 80-column, 23-row frame.
-  Nothing reported an error and nothing exited non-zero: the destination list was
-  nine rows instead of fourteen, which put the `.agents` hub row out of view and
-  surfaced as an unrelated picker assertion failing in CI.
+- The destination picker's count assertion accepted either `1 of 58 destinations`
+  or `1 of 57 destinations`. The real answer is 57, so the second alternative was
+  dead code that would have passed for the wrong reason the moment the registry
+  grew — it is now derived from `src/registry.zig`.
 
 ## [0.4.0] - 2026-09-25
 
@@ -73,6 +77,18 @@ per-version links will be added as releases are tagged.
 - Typing in the picker parked the cursor on a heading rather than on the first
   matching row, so the next keystroke acted on the wrong thing.
 - `build.zig.zon` had drifted a release behind `src/main.zig`.
+- **The prompts laid out at 80x24 on Linux, whatever the terminal actually was.**
+  `term.size()` asks the kernel with `TIOCGWINSZ`, which is *not* the same number
+  on every POSIX target: Darwin and the BSDs pack it as
+  `_IOR('t', 104, struct winsize)` (`0x40087468`), while Linux and the other
+  `asm-generic` targets number it flatly (`0x5413`). Darwin's value was used on
+  every target, so on Linux the ioctl failed and the layout fell back to the
+  80x24 default in silence — a 100x30 prompt drew an 80-column, 23-row frame.
+  Nothing reported an error and nothing exited non-zero: the destination list was
+  nine rows instead of fourteen, which put the `.agents` hub row out of view and
+  surfaced as an unrelated picker assertion failing in CI. This is the fix that
+  the `v0.4.0` tag was moved onto, so it is part of that release rather than
+  pending.
 
 ## [0.3.0] - 2026-09-25
 

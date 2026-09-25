@@ -52,7 +52,7 @@ add, rather than editing your shell's startup files behind your back.
 
 ```sh
 sh install.sh --dry-run                    # show the resolved plan, write nothing
-sh install.sh --version 0.4.0              # a specific release
+sh install.sh --version 0.4.1              # a specific release
 sh install.sh --bin-dir /usr/local/bin     # somewhere else
 ```
 
@@ -186,44 +186,62 @@ bliz install ./my-local-skills                     # a local directory
 ### Choosing where it goes
 
 On a terminal, an install with no `-a` opens a destination prompt instead of
-guessing:
+guessing. Both frames below are real captures at 80×24 — every row is exactly as
+wide as the frame, which is the invariant the rest of this section relies on:
 
 ```
-◆  Install to                                                     project + global
+◆  Install to                                                   project + global
 │
-│  ⌕ type to filter                                                      57 matches
+│  ⌕ type to filter▏                                                  58 matches
 │  ↑↓ move   space select   ←→ group/scope   tab next   ↵ install   esc cancel
 │
-│ ❯    scope  ● project   ○ global
-│      ◑ Select all                                                          6/57
-│  ──────────────────────────────────────────────────────────────────────────────
-│   ▾  ● In this project  6 destinations                                      6/6
-│   ├─ ● Claude Code                                          ./.claude/skills
-│   ├─ ● Cursor +20                                           ./.agents/skills
-│   ├─ ● Windsurf                                            ./.windsurf/skills
-│   ▾  ○ Not here yet  51 destinations
-│   ├─ ○ OpenCode new                                        ./.opencode/skills
-│   └─ ○ Qoder new                                              ./.qoder/skills
+│ ❯    scope  ● project   ○ global               /private/tmp/bliz-demo/home/app
+│      ◑ Select all                                                         6/58
+│  ─────────────────────────────────────────────────────────────────────────────
+│   ▾  ● In this project  6 destinations                                     6/6
+│   ├─ ● Claude Code                                            ./.claude/skills
+│   ├─ ● CodeBuddy                                           ./.codebuddy/skills
+│   ├─ ● WorkBuddy                                           ./.workbuddy/skills
+│   ├─ ● Cursor +20                                             ./.agents/skills
+│   ├─ ● OpenClaw                                                       ./skills
+│   └─ ● Windsurf                                             ./.windsurf/skills
+│   ▾  ○ Not here yet  52 destinations
+│   ├─ ○ OpenCode new                                         ./.opencode/skills
+│  Scope
+│  showing project — space switches to global. Project installs into this
+│  checkout; global installs under your home, shared by every project.
 │
-│  Selection  Claude Code, Cursor +20, Windsurf +3 more
-└                                                            57 destinations
+│  Selection  Claude Code, CodeBuddy, WorkBuddy +3 more
+└                                                                58 destinations
 ```
 
 The cursor starts on that `scope` row, so one keystroke reaches the other half
 of the machine:
 
 ```
-◆  Install to                                                     project + global
+◆  Install to                                                   project + global
+│
+│  ⌕ type to filter                                                   70 matches
 │  ↑↓ move   space select   ←→ group/scope   tab next   ↵ install   esc cancel
-│ ❯    scope  ○ project   ● global                                                  ~
-│      ○ Select all                                                          0/69
+│
+│ ❯    scope  ○ project   ● global                                             ~
+│      ○ Select all                                                         0/70
+│  ─────────────────────────────────────────────────────────────────────────────
 │   ▾  ○ Installed  1 destination
-│   └─ ○ Claude Code                                              ~/.claude/skills
-│   ▾  ○ Not installed  68 destinations
-│   ├─ ○ CodeBuddy new                                          ~/.codebuddy/skills
-│   └─ ○ Amp +2 new                                        ~/.config/agents/skills
-│  Selection  CodeBuddy  ·  +6 in project
-└                                              69 destinations · 1 will be created
+│   └─ ○ Claude Code                                            ~/.claude/skills
+│   ▾  ○ Not installed  69 destinations
+│   ├─ ○ CodeBuddy new                                       ~/.codebuddy/skills
+│   ├─ ○ WorkBuddy new                                       ~/.workbuddy/skills
+│   ├─ ○ Cursor new                                             ~/.cursor/skills
+│   ├─ ○ Codex new                                               ~/.codex/skills
+│   ├─ ○ Gemini CLI new                                         ~/.gemini/skills
+│   ├─ ○ GitHub Copilot new                                    ~/.copilot/skills
+│  Scope
+│  showing global — space switches to project. Project installs into this
+│  checkout; global installs under your home, shared by every project.
+│
+│  Selection  6 in project
+└                                                                70 destinations
 ```
 
 Four things make it a prompt rather than a form:
@@ -238,7 +256,7 @@ Four things make it a prompt rather than a form:
   global one in a single confirmed answer. Only the scope the install would have
   used on its own is pre-checked, so the other tab opens empty and `↵` still
   means what it always meant. The summary line is the one place the other tab's
-  tick is visible (`+1 in project` above), because submitting from here installs
+  tick is visible (`+6 in project` above), because submitting from here installs
   to both.
 - **One row per destination directory, not per agent.** The registry's 21 hub
   agents collapse to a single `.agents/skills` row labelled `Cursor +20`, which
@@ -276,8 +294,8 @@ stay one `↑` away.
 **With no `-a` and no prompt** (a pipe, CI, `--yes`) it installs to the agents
 whose skills directory already exists in the current scope, so a bare
 `bliz install` cannot litter directories for agents you do not have. Agents that
-share a directory are merged into a single copy — the registry's 80 agents
-collapse to 57 distinct project directories, 21 of them on the shared
+share a directory are merged into a single copy — the registry's 81 agents
+collapse to 58 distinct project directories, 21 of them on the shared
 `.agents/skills`. Nothing is ever overwritten unless `--force` is passed, which
 makes installs additive and safe to re-run in CI; a failed copy exits non-zero.
 
@@ -331,7 +349,8 @@ directory and `-g` for the global scope.
 
 **`stats`** — skills per root as a bar chart.
 
-**`agents`** — the full registry: 80 supported agents, each with its project
+**`agents`** — the full registry: 81 supported agents, from Claude Code, Cursor
+and Codex to CodeWhale, each with its project
 directory, its global directory (with `${VAR:-fallback}` shell templates shown
 verbatim), and a `●` marking the ones present on this machine.
 
@@ -341,13 +360,13 @@ Each module has one job. The dependency order runs top to bottom:
 
 | module | lines | responsibility |
 | --- | --- | --- |
-| `term.zig` | 230 | raw mode, signal guards, size ioctl, buffered output, escape constants |
+| `term.zig` | 296 | raw mode, signal guards, size ioctl, buffered output, escape constants |
 | `width.zig` | 488 | display-width maths — CJK/emoji cells, ANSI-aware measure, truncate, wrap |
 | `buf.zig` | 137 | growable byte sink and small text helpers |
 | `style.zig` | 84 | the 256-colour palette and colour mixing |
 | `anim.zig` | 190 | critically-damped springs, tweens, stagger, shimmer, counters |
 | `paint.zig` | 225 | the frame contract: `emitRow`, `erasePrevious`, `flush`, `checkFrame` |
-| `registry.zig` | 295 | the agent registry, directory templates, install-marker detection |
+| `registry.zig` | 336 | the agent registry, directory templates, install-marker detection |
 | `frontmatter.zig` | 229 | YAML frontmatter parsing |
 | `discover.zig` | 420 | root discovery and skill scanning |
 | `install.zig` | 629 | source parsing, `git` fetching, skill discovery in a source, tree copy |
@@ -523,7 +542,7 @@ Every refusal is asserted three times over: the exit status, the message, **and*
 that the destination directory was never created. `checksum mismatch` printed by
 a script that installed the file anyway reads like success in a log, and that is
 the failure this exists to catch. The fixture deliberately contains a tarball
-named `9.9.9` whose binary reports `0.4.0` — the same drift `release-check.sh`
+named `9.9.9` whose binary reports `0.4.1` — the same drift `release-check.sh`
 guards at build time, caught here at the far end — and one whose bytes were
 corrupted after it was hashed.
 
@@ -540,7 +559,7 @@ GitHub rather than a stub of it — and skips itself when offline.
 Tag a version and it is built, verified and published:
 
 ```sh
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.4.1 && git push origin v0.4.1
 ```
 
 [`CHANGELOG.md`](CHANGELOG.md) records what changed in each release, in
@@ -578,10 +597,10 @@ Six targets, each built on a runner of its own OS so only same-architecture
 cross-compiles are involved:
 
 ```
-bliz-0.4.0-x86_64-linux-musl.tar.gz    bliz-0.4.0-aarch64-macos.tar.gz
-bliz-0.4.0-aarch64-linux-musl.tar.gz   bliz-0.4.0-x86_64-macos.tar.gz
-bliz-0.4.0-x86_64-linux-gnu.tar.gz
-bliz-0.4.0-aarch64-linux-gnu.tar.gz
+bliz-0.4.1-x86_64-linux-musl.tar.gz    bliz-0.4.1-aarch64-macos.tar.gz
+bliz-0.4.1-aarch64-linux-musl.tar.gz   bliz-0.4.1-x86_64-macos.tar.gz
+bliz-0.4.1-x86_64-linux-gnu.tar.gz
+bliz-0.4.1-aarch64-linux-gnu.tar.gz
 install.sh
 SHA256SUMS
 ```

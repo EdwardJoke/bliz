@@ -17,7 +17,7 @@ const tui = @import("tui.zig");
 const pick = @import("pick.zig");
 const record = @import("record.zig");
 
-const version = "0.4.0";
+const version = "0.4.1";
 
 var scratch: [16]u8 = undefined;
 

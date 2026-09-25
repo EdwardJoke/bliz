@@ -57,6 +57,14 @@ pub const agents = [_]Agent{
 
     // --- dedicated directories --------------------------------------------
     .{ .key = "opencode", .display = "OpenCode", .project = ".opencode/skills", .global = "${XDG_CONFIG_HOME:-~/.config}/opencode/skills", .tier = .major },
+    // Not in the reference's agent table — this row comes from CodeWhale's own
+    // `docs/SKILLS.md`, which names exactly one writable directory per scope.
+    // The pre-rename `~/.deepseek/skills` is a *read* fallback for installations
+    // that upgraded in place, not a second destination: a fresh write to
+    // `~/.codewhale/skills` is read by old and new CodeWhale alike, so mapping
+    // the legacy path as its own row would invent a second decision where there
+    // is only one.
+    .{ .key = "codewhale", .display = "CodeWhale", .project = ".codewhale/skills", .global = "~/.codewhale/skills", .tier = .major },
     .{ .key = "openclaw", .display = "OpenClaw", .project = "skills", .global = "~/.openclaw/skills", .tier = .major },
     .{ .key = "windsurf", .display = "Windsurf", .project = ".windsurf/skills", .global = "~/.codeium/windsurf/skills", .tier = .major },
     .{ .key = "continue", .display = "Continue", .project = ".continue/skills", .global = "~/.continue/skills", .tier = .major },
@@ -260,6 +268,39 @@ test "only Claude Code creates its project directory by default" {
     // The opted-in agent must actually exist, or the fallback would quietly
     // install to the hub alone and never reach the agent it was meant for.
     try t.expect(find("claude-code") != null);
+}
+
+test "CodeWhale owns a dedicated directory on both scopes" {
+    const t = std.testing;
+    const found = find("codewhale");
+    try t.expect(found != null);
+    const cw = found.?;
+    try t.expectEqualStrings("CodeWhale", cw.display);
+    try t.expectEqualStrings(".codewhale/skills", cw.project);
+    try t.expectEqualStrings("~/.codewhale/skills", cw.global);
+    try t.expectEqual(Tier.major, cw.tier);
+
+    // A `.major` row is supposed to be a directory of its own. If another row
+    // shared it, the picker would merge the two into one `X +1` destination and
+    // the detail pane would name readers that do not read it.
+    var sharing: usize = 0;
+    for (agents) |a| {
+        if (std.mem.eql(u8, a.project, cw.project)) sharing += 1;
+    }
+    try t.expectEqual(@as(usize, 1), sharing);
+}
+
+test "every agent key is unique" {
+    const t = std.testing;
+    // `find` returns the first match, so a duplicate key would shadow the later
+    // row everywhere — the shadowed agent would be listed by `agents` but
+    // unreachable by `-a`, and nothing else in the suite would notice.
+    for (agents, 0..) |a, i| {
+        try t.expect(find(a.key) != null);
+        for (agents[i + 1 ..]) |later| {
+            try t.expect(!std.mem.eql(u8, a.key, later.key));
+        }
+    }
 }
 
 test "installedGlobally keys off the config directory, not a project dir" {

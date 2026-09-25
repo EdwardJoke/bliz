@@ -1490,7 +1490,7 @@ pub const Prompt = struct {
         self.row.add(style.mixAt(&self.scratch_a, 234, 239, fade * alpha));
         // When a filter is hiding most of the group, the count on the heading
         // has to be the number of rows actually below it, not the group size —
-        // otherwise a heading reading "57 destinations" sits above a single row.
+        // otherwise a heading reading "58 destinations" sits above a single row.
         if (group.items.len < group.total) {
             self.row.addFmt("{d} of {d} destinations", .{ group.items.len, group.total });
         } else {

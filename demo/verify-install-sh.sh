@@ -28,7 +28,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALLER="$ROOT/install.sh"
-VERSION="0.4.0"
+VERSION="0.4.1"
 
 PYTHON="${PYTHON:-}"
 if [ -z "$PYTHON" ]; then
@@ -196,7 +196,7 @@ package() { # binary version target
 }
 
 package "$BIN" "$VERSION" "$HOST_TARGET"   # the good one
-package "$BIN" "9.9.9" "$HOST_TARGET"      # name says 9.9.9, binary says 0.4.0
+package "$BIN" "9.9.9" "$HOST_TARGET"      # name says 9.9.9, binary says 0.4.1
 package "$BIN" "0.5.0" "$HOST_TARGET"      # hashed, then corrupted
 
 # A foreign target. Deliberately not a real ELF: the case below asserts the
@@ -275,25 +275,25 @@ section "Platforms that are refused"
 # ===========================================================================
 
 for fake in "MINGW64_NT-10.0-19045" "MSYS_NT-10.0" "CYGWIN_NT-10.0"; do
-    run env PATH="$SHIM:$PATH" FAKE_S="$fake" FAKE_M=x86_64 sh "$INSTALLER" --version 0.4.0 --dry-run
+    run env PATH="$SHIM:$PATH" FAKE_S="$fake" FAKE_M=x86_64 sh "$INSTALLER" --version 0.4.1 --dry-run
     expect_status 1 "$fake is refused"
     expect_in "Windows is not supported" "$fake says why"
 done
 # The refusal must survive a *matching* architecture: the usual reason a Windows
 # check gets skipped is that the arch branch runs first and looks fine.
-run env PATH="$SHIM:$PATH" FAKE_S=MINGW64_NT-10.0 FAKE_M=arm64 sh "$INSTALLER" --version 0.4.0 --dry-run
+run env PATH="$SHIM:$PATH" FAKE_S=MINGW64_NT-10.0 FAKE_M=arm64 sh "$INSTALLER" --version 0.4.1 --dry-run
 expect_status 1 "Git Bash on arm64 is still refused"
 expect_in "termios, poll and ioctl" "the refusal names the actual reason"
 
-run env PATH="$SHIM:$PATH" FAKE_S=Linux FAKE_M=i686 sh "$INSTALLER" --version 0.4.0 --dry-run
+run env PATH="$SHIM:$PATH" FAKE_S=Linux FAKE_M=i686 sh "$INSTALLER" --version 0.4.1 --dry-run
 expect_status 1 "32-bit x86 is refused"
 expect_in "32-bit x86 is not supported" "and says which architectures exist"
 
-run env PATH="$SHIM:$PATH" FAKE_S=Linux FAKE_M=riscv64 sh "$INSTALLER" --version 0.4.0 --dry-run
+run env PATH="$SHIM:$PATH" FAKE_S=Linux FAKE_M=riscv64 sh "$INSTALLER" --version 0.4.1 --dry-run
 expect_status 1 "an unknown architecture is refused"
 expect_in "unsupported architecture: riscv64" "and names it"
 
-run env PATH="$SHIM:$PATH" FAKE_S=FreeBSD FAKE_M=x86_64 sh "$INSTALLER" --version 0.4.0 --dry-run
+run env PATH="$SHIM:$PATH" FAKE_S=FreeBSD FAKE_M=x86_64 sh "$INSTALLER" --version 0.4.1 --dry-run
 expect_status 1 "an unsupported OS is refused"
 expect_in "unsupported operating system: FreeBSD" "and names it"
 
@@ -306,48 +306,48 @@ dry() { # uname_s uname_m extra...
     run env PATH="$SHIM:$PATH" FAKE_S="$s" FAKE_M="$m" sh "$INSTALLER" "$@"
 }
 
-dry Linux x86_64 --version 0.4.0 --dry-run
+dry Linux x86_64 --version 0.4.1 --dry-run
 expect_status 0 "Linux/x86_64 plans an install"
 expect_in "x86_64-linux-musl" "Linux/x86_64 selects the static musl build"
 expect_in "->  x86_64-linux-musl" "the plan shows the target it resolved"
 
-dry Linux aarch64 --version 0.4.0 --dry-run
+dry Linux aarch64 --version 0.4.1 --dry-run
 expect_in "aarch64-linux-musl" "Linux/aarch64 selects aarch64-linux-musl"
 
-dry Linux amd64 --version 0.4.0 --dry-run
+dry Linux amd64 --version 0.4.1 --dry-run
 expect_in "x86_64-linux-musl" "Linux/amd64 is understood as x86_64"
 
-dry Darwin x86_64 --version 0.4.0 --dry-run
+dry Darwin x86_64 --version 0.4.1 --dry-run
 expect_in "x86_64-macos" "macOS/x86_64 selects x86_64-macos"
 
-dry Darwin arm64 --version 0.4.0 --dry-run
+dry Darwin arm64 --version 0.4.1 --dry-run
 expect_in "aarch64-macos" "macOS/arm64 selects aarch64-macos"
 expect_not_in "would be skipped" "the host's own target is not marked unrunnable"
 
-dry Darwin arm64 --version 0.4.0 --dry-run --target "$FOREIGN_TARGET"
+dry Darwin arm64 --version 0.4.1 --dry-run --target "$FOREIGN_TARGET"
 expect_in "$FOREIGN_TARGET" "--target overrides detection"
 expect_in "would be skipped" "a foreign target says the smoke test will be skipped"
 
 DRYDIR="$WORK/dry"
-run sh "$INSTALLER" --version 0.4.0 --bin-dir "$DRYDIR" --dry-run
+run sh "$INSTALLER" --version 0.4.1 --bin-dir "$DRYDIR" --dry-run
 expect_status 0 "a dry run succeeds"
 expect_false "--dry-run created the destination directory" test -e "$DRYDIR"
 
-run sh "$INSTALLER" --version 0.4.0 --dry-run --bin-dir '~/bliz-dry'
+run sh "$INSTALLER" --version 0.4.1 --dry-run --bin-dir '~/bliz-dry'
 expect_in "$HOME/bliz-dry/" "a quoted tilde in --bin-dir is expanded"
 
-run sh "$INSTALLER" --version 0.4.0 --dry-run --repo example/fork
-expect_in "github.com/example/fork/releases/download/v0.4.0/" "--repo redirects the download URL"
+run sh "$INSTALLER" --version 0.4.1 --dry-run --repo example/fork
+expect_in "github.com/example/fork/releases/download/v0.4.1/" "--repo redirects the download URL"
 
-run sh "$INSTALLER" --version v0.4.0 --dry-run
-expect_in "(tag v0.4.0)" "a leading v in --version is accepted"
+run sh "$INSTALLER" --version v0.4.1 --dry-run
+expect_in "(tag v0.4.1)" "a leading v in --version is accepted"
 
 run env BLIZ_BASE_URL="$BASE" sh "$INSTALLER" --dry-run
 expect_status 1 "BLIZ_BASE_URL without a version is refused"
 expect_in "must be explicit" "and explains why a mirror needs --version"
 
-run env BLIZ_BASE_URL="$BASE" sh "$INSTALLER" --version 0.4.0 --dry-run --bin-dir "$WORK/dry2"
-expect_in "$BASE/bliz-0.4.0-$HOST_TARGET.tar.gz" "a mirror base URL is used verbatim"
+run env BLIZ_BASE_URL="$BASE" sh "$INSTALLER" --version 0.4.1 --dry-run --bin-dir "$WORK/dry2"
+expect_in "$BASE/bliz-0.4.1-$HOST_TARGET.tar.gz" "a mirror base URL is used verbatim"
 
 # ===========================================================================
 section "Installing (real download, real checksum, real binary)"
@@ -425,7 +425,7 @@ expect_status 1 "an asset missing from SHA256SUMS is refused"
 expect_in "is not listed in SHA256SUMS" "and the missing entry is named"
 expect_false "nothing was written for the unlisted asset" test -e "$WORK/t-unlisted"
 
-# The tarball is named 9.9.9 but contains the 0.4.0 binary — the same class of
+# The tarball is named 9.9.9 but contains the 0.4.1 binary — the same class of
 # drift scripts/release-check.sh guards in CI, caught here at the far end.
 run env BLIZ_BASE_URL="$BASE" sh "$INSTALLER" --version 9.9.9 --bin-dir "$WORK/t-drift"
 expect_status 1 "a package whose name contradicts its binary is refused"

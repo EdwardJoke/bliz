@@ -23,6 +23,7 @@ import errno
 import fcntl
 import os
 import pty
+import re
 import select
 import shutil
 import struct
@@ -197,6 +198,30 @@ def prune_tree(root):
             shutil.rmtree(entry)
 
 
+def project_destination_count():
+    """How many project-scope rows the registry produces, read from the registry.
+
+    The picker offers one row per destination directory, so this is the total its
+    group heading reports. Deriving it beats writing a literal: the literal only
+    fails the day someone adds an agent, and the assertion this replaced accepted
+    *two* literals, so it went on passing for the wrong reason once the count
+    moved from one to the other.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "registry.zig")
+    with open(path) as fh:
+        text = fh.read()
+    body = text.split("pub const agents = [_]Agent{", 1)[1].split("\n};", 1)[0]
+    roots = set()
+    for line in body.splitlines():
+        line = line.split("//", 1)[0]      # a commented-out row is not a row
+        found = re.search(r'\.project = "([^"]*)"', line)
+        if found and found.group(1):
+            roots.add(found.group(1))
+    if not roots:
+        raise Failure("could not read any project directories out of src/registry.zig")
+    return len(roots)
+
+
 class Harness:
     def __init__(self, binary, verbose):
         self.binary = binary
@@ -324,7 +349,7 @@ class Harness:
         s.close()
 
         self.check("the group heading reports the filtered count",
-                   "1 of 58 destinations" in narrowed or "1 of 57 destinations" in narrowed,
+                   f"1 of {project_destination_count()} destinations" in narrowed,
                    narrowed[-600:])
         self.check("exit code is 0", code == 0, f"exit={code}")
         windsurf = skills_in(self.project, ".windsurf", "skills")

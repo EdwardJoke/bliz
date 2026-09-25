@@ -50,7 +50,7 @@ Usage:
   install.sh [options]
 
 Options:
-  --version <v>     Install a specific release, e.g. --version 0.4.0 or v0.4.0.
+  --version <v>     Install a specific release, e.g. --version 0.4.1 or v0.4.1.
                     Default: the latest published release.
   --bin-dir <dir>   Where to put the binary. Default: ~/.local/bin
   --repo <o/r>      Install from a fork, e.g. --repo someone/bliz.

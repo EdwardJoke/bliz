@@ -2,7 +2,7 @@
 #
 # Gate for the release pipeline: every place a version is written down must agree.
 #
-# A release stamps a version into a filename (`bliz-0.4.0-aarch64-macos.tar.gz`)
+# A release stamps a version into a filename (`bliz-0.4.1-aarch64-macos.tar.gz`)
 # while the binary inside that tarball reports its own version from a constant in
 # `src/main.zig`. When those disagree nothing fails — you publish a tarball whose
 # name contradicts its contents, and you find out from a bug report. The two
@@ -10,7 +10,7 @@
 # existed, which is why it is a gate and not a warning.
 #
 # Usage:
-#   scripts/release-check.sh v0.4.0
+#   scripts/release-check.sh v0.4.1
 #
 # When ZIG_VERSION is set in the environment (the release workflow pins it) it
 # must equal build.zig.zon's `.minimum_zig_version`. That matters because
@@ -21,7 +21,7 @@ set -euo pipefail
 
 tag="${1:-}"
 if [ -z "$tag" ]; then
-    echo "usage: release-check.sh <tag>    e.g. release-check.sh v0.4.0" >&2
+    echo "usage: release-check.sh <tag>    e.g. release-check.sh v0.4.1" >&2
     exit 2
 fi
 
@@ -30,14 +30,14 @@ cd "$(dirname "$0")/.."
 case "$tag" in
 v*) want="${tag#v}" ;;
 *)
-    echo "::error::tag '$tag' does not start with 'v'; releases are tagged v<semver>, e.g. v0.4.0" >&2
+    echo "::error::tag '$tag' does not start with 'v'; releases are tagged v<semver>, e.g. v0.4.1" >&2
     exit 1
     ;;
 esac
 
-# `const version = "0.4.0";` — src/main.zig, at column zero.
+# `const version = "0.4.1";` — src/main.zig, at column zero.
 cli_version="$(sed -n 's/^const version = "\(.*\)";$/\1/p' src/main.zig | head -1)"
-# `.version = "0.4.0",` — build.zig.zon. Note this cannot match
+# `.version = "0.4.1",` — build.zig.zon. Note this cannot match
 # `.minimum_zig_version`, which starts with `.minimum`.
 pkg_version="$(sed -n 's/^[[:space:]]*\.version = "\(.*\)",$/\1/p' build.zig.zon | head -1)"
 # `.minimum_zig_version = "0.16.0",`
