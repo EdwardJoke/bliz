@@ -10,6 +10,7 @@ const std = @import("std");
 test {
     _ = @import("width.zig");
     _ = @import("buf.zig");
+    _ = @import("term.zig");
     _ = @import("paint.zig");
     _ = @import("tui.zig");
     _ = @import("pick.zig");

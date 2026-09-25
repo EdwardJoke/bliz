@@ -4,6 +4,7 @@
 //! dependencies and no allocator-driven I/O machinery in the hot path.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 
 extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
@@ -17,20 +18,49 @@ const Winsize = extern struct {
     ypixel: u16,
 };
 
-/// Darwin `_IOR('t', 104, struct winsize)`.
-const TIOCGWINSZ: c_ulong = 0x40087468;
+/// `TIOCGWINSZ` — and it is *not* the same number on every POSIX target.
+///
+/// Getting it wrong fails silently rather than loudly. The ioctl returns an
+/// error, `size()` falls back to 80x24, and every layout downstream is then
+/// computed for a terminal nobody is using — no message, no exit code, just a
+/// frame of the wrong shape. This was Darwin's value on every target until a
+/// Linux CI run painted a 100x30 prompt as an 80-column frame, which put the
+/// list's ninth row out of view and surfaced as an unrelated picker assertion
+/// failing.
+///
+/// - Linux and the other `asm-generic` targets number ioctls flatly, from
+///   `0x5400`: `<asm-generic/ioctls.h>` has `TIOCGWINSZ 0x5413`.
+/// - Darwin and the BSDs pack a direction, a type byte and the argument size
+///   into the request: `_IOR('t', 104, struct winsize)`, i.e. `_IOC_READ`
+///   (`2`) in the top two bits, `'t'` in the next byte, `104` in the low byte
+///   and `sizeof(struct winsize)` (`8`) above it.
+const TIOCGWINSZ: c_ulong = switch (builtin.os.tag) {
+    .linux => 0x5413, // asm-generic/ioctls.h
+    else => 0x40087468, // _IOR('t', 104, struct winsize): Darwin, FreeBSD, NetBSD, OpenBSD
+};
 
 pub const Size = struct {
     cols: usize = 80,
     rows: usize = 24,
 };
 
-pub fn size() Size {
+/// The size of the terminal behind `fd`, or the 80x24 default when there is no
+/// terminal to ask — a redirected stdout, a CI log, a `| head` pipeline. The
+/// prompt only runs on a TTY, so the default is a floor rather than a guess.
+pub fn sizeOf(fd: c_int) Size {
     var ws: Winsize = undefined;
-    if (ioctl(posix.STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 and ws.col > 0 and ws.row > 0) {
+    if (ioctl(fd, TIOCGWINSZ, &ws) == 0 and ws.col > 0 and ws.row > 0) {
         return .{ .cols = ws.col, .rows = ws.row };
     }
     return .{};
+}
+
+/// The size of the terminal the *prompt* draws on. Layout is measured in
+/// columns of stdout, so that is the fd the kernel is asked about — not stdin,
+/// which happens to be the same terminal in the interesting cases but is not
+/// the thing being sized.
+pub fn size() Size {
+    return sizeOf(posix.STDOUT_FILENO);
 }
 
 pub fn stdinIsTty() bool {
@@ -227,4 +257,40 @@ pub fn pollInput(timeout_ms: ?i32) bool {
 
 pub fn readInput(buf: []u8) usize {
     return posix.read(posix.STDIN_FILENO, buf) catch 0;
+}
+
+test "the window-size request is encoded for the target, not copied from Darwin" {
+    // Asserted as a *property* rather than by restating the table, because the
+    // table is the thing that was wrong. The two encodings are structurally
+    // different, so a constant that looks like one and is used as the other is
+    // the bug — decode the BSD form and show the split is real.
+    //
+    // BSD packs it as `_IOC(dir, 't', 104, sizeof(struct winsize))`: a direction
+    // in the top two bits, then one argument size, then the type, then the
+    // number. Bit 30 is `IOC_OUT` here — the kernel *writes* the struct back
+    // through the pointer — not "read" in the syscall sense.
+    const bsd: c_ulong = 0x40087468;
+    const flat: c_ulong = 0x5413;
+
+    try std.testing.expect(bsd != flat);
+    try std.testing.expectEqual(@as(c_ulong, 1), bsd >> 30); // IOC_OUT
+    try std.testing.expectEqual(@as(c_ulong, 't'), (bsd >> 8) & 0xff); // the tty group
+    try std.testing.expectEqual(@as(c_ulong, 104), bsd & 0xff); // the request number
+    try std.testing.expectEqual(@as(c_ulong, 8), (bsd >> 16) & 0x3fff); // sizeof(struct winsize)
+
+    switch (builtin.os.tag) {
+        .linux => try std.testing.expectEqual(flat, TIOCGWINSZ),
+        else => try std.testing.expectEqual(bsd, TIOCGWINSZ),
+    }
+}
+
+test "the no-terminal fallback is 80x24, which is what a wrong request gets" {
+    // `sizeOf` cannot fail; it reports the default instead, which is exactly why
+    // a mis-encoded ioctl is invisible downstream — the layout simply becomes
+    // the shape of a terminal nobody is using. Pin the value, and note that the
+    // real end-to-end guard is the PTY harness, which asserts the prompt painted
+    // at the size the terminal was set to. (There is no portable way to hand
+    // this test a non-TTY fd in 0.16: `std.posix.pipe` is gone.)
+    try std.testing.expectEqual(@as(usize, 80), (Size{}).cols);
+    try std.testing.expectEqual(@as(usize, 24), (Size{}).rows);
 }

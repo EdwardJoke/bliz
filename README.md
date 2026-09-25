@@ -479,7 +479,7 @@ written — because a recording never takes the interactive path at all. So the
 install prompt gets driven for real, under a PTY:
 
 ```sh
-python3 demo/verify-install.py          # 48 checks
+python3 demo/verify-install.py          # 50 checks
 python3 demo/verify-install.py -v       # dump the captured screen
 ```
 
@@ -497,6 +497,15 @@ populated *and* the project empty, and a cross-scope one has to write both,
 because a scope filter that only changed what was drawn would pass every
 purported check of the screen and every filesystem check of a single scope.
 This is also the harness that caught the picker never painting its first frame.
+
+Its first case asserts the frame's *shape* — every row exactly as wide as the
+terminal, and taller than the 80x24 default. That is a regression guard with a
+history: `term.size()` asks the kernel with `TIOCGWINSZ`, whose value is not the
+same number on every POSIX target, and the Darwin value was used on Linux. The
+ioctl failed, the layout silently fell back to 80x24, and the first symptom was a
+*different* assertion failing three cases later — the destination list was nine
+rows instead of fourteen, so the row it looked for had fallen off the bottom.
+A wrong size now says so, on the first case.
 
 ### Verifying the installer
 
@@ -534,10 +543,14 @@ Tag a version and it is built, verified and published:
 git tag v0.4.0 && git push origin v0.4.0
 ```
 
+[`CHANGELOG.md`](CHANGELOG.md) records what changed in each release, in
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) form.
+
 `.github/workflows/release.yml` is the only workflow in the repository — there is
 deliberately no build-on-push CI — so that `verify` job is the only thing standing
-between a broken commit and a published binary. It runs all four layers above
-before the build matrix is allowed to start.
+between a broken commit and a published binary. It runs every layer above — the
+unit tests, the frame invariant, the recorded replay, the PTY harness and the
+installer harness — before the build matrix is allowed to start.
 
 Zig is installed by [`vercel-labs/setup-zig`](https://github.com/vercel-labs/setup-zig),
 which installs one exact release and verifies the download against Zig's minisign

@@ -152,6 +152,20 @@ class Session:
         text = re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]", b"", bytes(self.output))
         return text.decode("utf-8", "replace")
 
+    def frame(self):
+        """The most recent complete frame, escape sequences stripped.
+
+        Every repaint is preceded by an erase-to-end-of-screen, so what follows
+        the last one is what is on the terminal now. `screen()` returns the whole
+        cumulative capture, which is the right thing for "did this ever say X"
+        and the wrong thing for "what does it say" — a row that scrolled away
+        ten keystrokes ago is still in there.
+        """
+        import re
+
+        tail = bytes(self.output).rsplit(b"\x1b[J", 1)[-1]
+        return re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]", b"", tail).decode("utf-8", "replace")
+
 
 def make_source(root):
     """A source directory with two skills in the canonical container layout."""
@@ -221,6 +235,39 @@ class Harness:
             print("       --->8---")
 
     # ------------------------------------------------------------------ cases
+
+    def case_layout_honours_the_pty_size(self):
+        print("\nthe prompt lays out at the size the terminal actually is")
+        prune_tree(self.project)
+        s = self.start(self.source)
+        s.wait_for("Install to")
+        s.send(" ")
+        s.wait_for("Not installed")
+        drawn = s.frame()
+        s.close()
+
+        # Only rows with something on them: a frame can end on a newline, and a
+        # blank line is zero cells wide for reasons that have nothing to do with
+        # the terminal size.
+        rows = [l for l in drawn.splitlines() if l.strip()]
+        widths = {len(l) for l in rows}
+        self.dump(s)
+
+        # A guard with a specific history. `term.size()` asks the kernel with
+        # `TIOCGWINSZ`, whose value is *not* the same on every POSIX target; the
+        # Darwin number was used on Linux, the ioctl failed, and the layout fell
+        # back to 80x24 in silence. Nothing failed: the prompt just drew an
+        # 80-column frame into a 100-column terminal, and the only symptom was a
+        # *different* assertion failing — the list was two rows shorter, so the
+        # row it looked for had fallen off the bottom. Asserting the geometry
+        # directly means a wrong size says so, instead of looking like a picker
+        # bug three cases later.
+        self.check("the frame is exactly as wide as the terminal",
+                   widths == {COLS}, f"expected all rows {COLS} wide, got {sorted(widths)}")
+        # 24 is the fallback height: a frame that short means the ioctl failed
+        # rather than that the prompt is being terse.
+        self.check("the frame is taller than the 80x24 fallback",
+                   len(rows) > 24, f"frame has {len(rows)} rows at a {ROWS}-row terminal")
 
     def case_prompt_appears(self):
         print("the destination prompt opens for a bare install")
@@ -495,6 +542,7 @@ def main():
         print(f"binary  {binary}")
         print(f"tmpdir  {h.tmp}\n")
         for case in (
+            h.case_layout_honours_the_pty_size,
             h.case_prompt_appears,
             h.case_accept_defaults,
             h.case_pick_only_another,
