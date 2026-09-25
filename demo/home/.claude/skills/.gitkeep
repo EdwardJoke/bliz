@@ -1,0 +1,11 @@
+This file exists so git keeps the directory.
+
+`demo/home` is the pinned `$HOME` for the picker recording (`build.zig` sets it
+for that one `verify` step). The global half of the picker resolves against
+`$HOME`, and `registry.installedGlobally` decides an agent is present from the
+*parent* of its global skills path — `~/.claude` for Claude Code.
+
+Git cannot track an empty directory, so without this file a fresh clone would
+have no `demo/home/.claude`, the picker would offer no global destination, and
+the recording would change. The frame invariant would still pass, because a
+missing row is still exactly `cols` wide, so nothing would report it.

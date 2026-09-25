@@ -1,0 +1,23 @@
+# Build output
+/.zig-cache/
+/zig-out/
+
+# Local packaging output (the release workflow builds this in CI)
+/dist/
+
+# Recordings are build products: `zig build verify` regenerates them, and the
+# baked players in demo/*.html already carry their own copy of the frames.
+/frames.json
+/demo/workspace/frames.json
+/demo/workspace/pick-frames.json
+
+# Local agent/tooling state — personal, never committed.
+#
+# The leading slash is load-bearing. `demo/workspace/.workbuddy/` is a *fixture*
+# directory that the demo scans and the recording displays; a bare `.workbuddy/`
+# pattern matches at any depth and would drop it from a fresh clone, silently
+# changing the recording rather than failing anything.
+/.workbuddy/
+
+# macOS
+.DS_Store

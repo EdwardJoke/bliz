@@ -1,0 +1,259 @@
+# Release pipeline for bliz.
+#
+# This is deliberately the only workflow in the repository. There is no
+# build-on-push CI, so the `verify` job below is the only thing standing between
+# a broken commit and a published binary — which is why the whole four-layer
+# suite has to finish before the build matrix is allowed to start, instead of
+# living in a separate pull-request check.
+#
+# Zig comes from vercel-labs/setup-zig, which installs one exact release and
+# verifies the download against Zig's minisign public key plus the SHA-256 from
+# the official download index.
+#
+# There is no `actions/cache` step on purpose: bliz has no dependencies, so the
+# only thing a cache would warm is the local compile cache, and a cold build of
+# this tree takes a few seconds.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to rebuild and republish (e.g. v0.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # vercel-labs/setup-zig takes an explicit version — it has no way to read
+  # `minimum_zig_version` out of build.zig.zon. scripts/release-check.sh asserts
+  # this equals build.zig.zon's value, so the pin cannot silently drift away
+  # from the version the project actually declares as its minimum.
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          # `gh release create --generate-notes` walks the commits since the
+          # previous tag, so it needs the tags and the history behind them.
+          fetch-depth: 0
+
+      - uses: vercel-labs/setup-zig@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Zig is the version we pinned
+        run: |
+          set -euo pipefail
+          got="$(zig version)"
+          if [ "$got" != "$ZIG_VERSION" ]; then
+            echo "::error::setup-zig installed $got but the workflow pins $ZIG_VERSION"
+            exit 1
+          fi
+
+      - name: Every version label agrees
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: scripts/release-check.sh "$TAG"
+
+      - name: Unit tests
+        run: zig build test
+
+      - name: Frame invariant, both prompts
+        run: zig build verify
+
+      # `zig build verify` installs the executable, so from here on it exists.
+      - name: The binary agrees about its own version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          got="$(./zig-out/bin/bliz version)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::the built binary reports $got but the tag says $want"
+            exit 1
+          fi
+
+      - name: Recorded players replay cleanly
+        run: |
+          set -euo pipefail
+          node demo/verify-player.js demo/player.html
+          node demo/verify-player.js demo/player-install.html
+
+      - name: The install path drives a real terminal
+        run: python3 demo/verify-install.py
+
+      # install.sh downloads an executable and puts it on PATH, so it is the
+      # one file here whose failure mode is "worked, and installed the wrong
+      # thing". Its harness serves a release fixture over a local HTTP server
+      # and asserts on the exit status, the output, and the filesystem.
+      - name: The installer installs
+        run: bash demo/verify-install-sh.sh
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing should not conceal the state of the other five.
+      fail-fast: false
+      matrix:
+        include:
+          # Every target is built on a runner of its own OS, with only same-OS
+          # cross-architecture builds in between. Cross-*OS* linking is where
+          # `link_libc = true` gets fragile, and it would buy nothing here: the
+          # macos rows below run natively.
+          #
+          # There are no Windows rows, and that is a limitation rather than an
+          # oversight. `bliz` drives raw mode through `std.posix` — termios,
+          # `poll`, `ioctl` — and on Windows that layer is a stub, so
+          # `-Dtarget=aarch64-windows-gnu` fails with
+          #   error: root source file struct 'os.windows.ws2_32' has no member named 'pollfd'
+          # plus six errors in src/term.zig. Shipping a Windows row would mean
+          # writing a console backend (SetConsoleMode / ReadConsoleInput) first.
+          - runner: ubuntu-latest
+            target: x86_64-linux-musl
+            native: true
+          - runner: ubuntu-latest
+            target: aarch64-linux-musl
+          - runner: ubuntu-latest
+            target: x86_64-linux-gnu
+          - runner: ubuntu-latest
+            target: aarch64-linux-gnu
+          - runner: macos-latest
+            target: aarch64-macos
+            native: true
+          - runner: macos-latest
+            target: x86_64-macos
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: vercel-labs/setup-zig@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build
+        shell: bash
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      # A cross-compile that links is not yet a binary that runs. On the rows
+      # where the runner can execute its own output, do.
+      - name: Run the artifact — it only counts if it executes
+        if: matrix.native
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./zig-out/bin/bliz* version
+
+      # The strongest claim available about a published binary: drive the
+      # stripped ReleaseSafe musl build through a real pseudo-terminal, send it
+      # real keystrokes, and then check which directories it actually created.
+      - name: Drive the shipped Linux binary in a real terminal
+        if: matrix.target == 'x86_64-linux-musl'
+        shell: bash
+        run: python3 demo/verify-install.py --bin zig-out/bin/bliz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bliz-${{ matrix.target }}
+          path: zig-out/bin/bliz*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: binaries
+          pattern: bliz-*
+
+      # All packaging happens here, on one runner, so every tarball comes out of
+      # the same `tar` implementation and the archives are at least consistent
+      # with each other. Nothing in this step needs to know which OS built what.
+      - name: Package
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p dist
+          for dir in binaries/bliz-*/; do
+            target="${dir#binaries/bliz-}"
+            target="${target%/}"
+            name="bliz-${version}-${target}"
+            work="$(mktemp -d)"
+            stage="${work}/${name}"
+            mkdir -p "$stage"
+
+            # Documented limitation of upload-artifact: "File permissions are
+            # not maintained during artifact upload... all files will have 644."
+            # Without this the tarball would contain a binary nobody can run —
+            # verified by packaging with the line removed.
+            cp "${dir}"bliz* "$stage/"
+            chmod +x "$stage"/bliz*
+            cp README.md "$stage/"
+            if [ -f LICENSE ]; then cp LICENSE "$stage/"; fi
+
+            tar -C "$work" -czf "dist/${name}.tar.gz" "$name"
+            rm -rf "$work"
+          done
+
+          # Ship the installer with the release it installs, so
+          #   releases/latest/download/install.sh
+          # is always the one that matches the latest assets. It is deliberately
+          # not one of the per-platform artifacts: it is written in plain `sh`
+          # and is identical on every platform, so a matrix of six identical
+          # copies would only invite them to drift.
+          cp install.sh dist/
+          ls -l dist
+
+      - name: Checksums
+        working-directory: dist
+        shell: bash
+        # install.sh is covered too — it is downloaded and executed, which makes
+        # it the single most important file here to be able to verify.
+        run: sha256sum *.tar.gz install.sh > SHA256SUMS
+
+      # Re-runnable: a failed release job is retried far more often than a tag
+      # is re-pushed, so an existing release has its assets replaced instead of
+      # failing the run.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — replacing its assets"
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --verify-tag \
+              --generate-notes
+          fi
