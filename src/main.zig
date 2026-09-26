@@ -772,6 +772,93 @@ fn runPicker(ctx: *Context, scopes: []const discover.Scope, defaults: []const In
     };
 }
 
+/// The skills a source holds, as picker rows.
+///
+/// One row per skill and one group: the destination prompt's second axis —
+/// does this directory already exist? — has no meaning for a source, where a
+/// skill is either in the checkout or is not. Nothing is pre-checked, which is
+/// where the reference starts too: choosing one of thirty must not mean
+/// undoing twenty-nine first, and `Select all` is one keystroke the other way.
+///
+/// Two skills can share a directory name — `skills/a/foo` and `skills/b/foo`
+/// are both installed as `foo`, so the second replaces the first, and the
+/// install report says so rather than hiding it. `--list` tells them apart by
+/// path, so the picker does too: the row's right-hand hint is the path within
+/// the source.
+fn skillItems(ctx: *Context, found: []const install.Found) ![]pick.Item {
+    const items = try ctx.arena.alloc(pick.Item, found.len);
+    for (found, 0..) |f, i| {
+        var detail = bufmod.Buf.init(ctx.arena);
+        detail.add(f.rel);
+        if (f.description.len > 0) {
+            detail.add("  ·  ");
+            detail.add(f.description);
+        }
+        items[i] = .{
+            .key = f.name,
+            .label = f.name,
+            .root = f.dir,
+            .short_root = f.rel,
+            .agents = &.{},
+            // A source row describes what is being copied, not where it lands,
+            // so the footer's "N will be created" clause — which counts
+            // destinations that do not exist yet — has to stay off.
+            .detected = true,
+            .default_on = false,
+            .scope = .project,
+            .detail = detail.bytes(),
+        };
+    }
+    return items;
+}
+
+/// Asks which of a source's skills to install.
+///
+/// An empty slice means the user cancelled. An empty *selection* is not
+/// reachable by submitting — the prompt nudges instead — so the two cases
+/// cannot be confused.
+fn runSkillPicker(
+    ctx: *Context,
+    found: []const install.Found,
+    src: install.Source,
+) ![]const install.Found {
+    const items = try skillItems(ctx, found);
+    const result = try pick.run(
+        ctx.arena,
+        ctx.gpa,
+        ctx.io,
+        ctx.env,
+        items,
+        .{
+            // Not "Select skills": that is `bliz find`'s prompt, which browses
+            // what is already on disk. This one asks what to copy *out* of a
+            // source.
+            .message = "Select skills to install",
+            // The source's own name, not the path the user typed. The header
+            // right-aligns the badge and clips the *message* to make room, so a
+            // long spec would eat the message character by character — which is
+            // why the destination prompt's badge is "project + global" rather
+            // than a path. The rows carry the paths.
+            .badge = src.baseName(),
+            .detail_lines = 3,
+            .words = pick.skill_words,
+        },
+        ctx.out,
+        term.supportsSyncOutput(ctx.env),
+        ctx.cwd,
+    );
+    switch (result.outcome) {
+        .cancelled => return &.{},
+        .submitted => |indices| {
+            var out: std.ArrayList(install.Found) = .empty;
+            for (indices) |i| {
+                if (i < found.len) try out.append(ctx.arena, found[i]);
+            }
+            return out.items;
+        },
+    }
+}
+
 /// Targets for a scope that has no agent directory at all.
 ///
 /// The universal hub is the anchor: it is the reference's canonical copy
@@ -919,6 +1006,54 @@ fn cmdInstall(ctx: *Context) !void {
         return;
     }
 
+    // --- which skills -----------------------------------------------------
+    // Asked *before* the destination prompt: "what" reads before "where", the
+    // reference asks in this order too, and an answer to "where" would be
+    // thrown away by a cancel here.
+    const skill_specs = ctx.values(&.{ "--skill", "-s" });
+    const every_skill = hasSpec(skill_specs, "*") or ctx.flag("--all");
+    var chosen: std.ArrayList(install.Found) = .empty;
+
+    if (skill_specs.len > 0 and !every_skill) {
+        // Named skills: no prompt, and a name that matches nothing is an error
+        // rather than a shorter list, so a typo cannot quietly install less
+        // than was asked for.
+        for (skill_specs) |needle| {
+            var hit = false;
+            for (found) |f| {
+                const match = std.mem.eql(u8, f.name, needle) or
+                    (f.title.len > 0 and std.mem.eql(u8, f.title, needle));
+                if (!match) continue;
+                try chosen.append(ctx.arena, f);
+                hit = true;
+            }
+            if (!hit) {
+                o.writeAll(style.AMBER);
+                o.writeAll("no skill named ");
+                o.writeAll(needle);
+                o.writeAll(" in this source\n");
+                o.writeAll(term.RESET);
+            }
+        }
+        if (chosen.items.len == 0) return error.SkillNotFound;
+    } else if (every_skill or found.len == 1 or !interactive(ctx)) {
+        // Every skill, and never a prompt on the way there: `--all` and
+        // `--skill '*'` said so outright, a single skill is not a choice, and a
+        // run with `--yes`, with `--json`, or with no terminal to ask on has
+        // already been told not to ask. The report names what was copied, so
+        // the answer is visible either way.
+        try chosen.appendSlice(ctx.arena, found);
+    } else {
+        const picked = try runSkillPicker(ctx, found, src);
+        if (picked.len == 0) {
+            o.writeAll(style.AMBER);
+            o.writeAll("cancelled — nothing installed\n");
+            o.writeAll(term.RESET);
+            return error.NothingSelected;
+        }
+        try chosen.appendSlice(ctx.arena, picked);
+    }
+
     // --- where ------------------------------------------------------------
     // `-g` names the scope for every path that cannot ask, and it is also what
     // the prompt pre-checks. `-p` says the same thing for project, which is the
@@ -1018,7 +1153,7 @@ fn cmdInstall(ctx: *Context) !void {
         }
     }
 
-    // --- which skills -----------------------------------------------------
+    // --- act --------------------------------------------------------------
     // Target labels are formatted only now, because `merged` keeps growing
     // while agents are added.
     const labels = try ctx.arena.alloc([]const u8, targets.items.len);
@@ -1028,33 +1163,6 @@ fn cmdInstall(ctx: *Context) !void {
         else
             t.display;
     }
-
-    const skill_specs = ctx.values(&.{ "--skill", "-s" });
-    var chosen: std.ArrayList(install.Found) = .empty;
-    if (skill_specs.len == 0 or hasSpec(skill_specs, "*")) {
-        try chosen.appendSlice(ctx.arena, found);
-    } else {
-        for (skill_specs) |needle| {
-            var hit = false;
-            for (found) |f| {
-                const match = std.mem.eql(u8, f.name, needle) or
-                    (f.title.len > 0 and std.mem.eql(u8, f.title, needle));
-                if (!match) continue;
-                try chosen.append(ctx.arena, f);
-                hit = true;
-            }
-            if (!hit) {
-                o.writeAll(style.AMBER);
-                o.writeAll("no skill named ");
-                o.writeAll(needle);
-                o.writeAll(" in this source\n");
-                o.writeAll(term.RESET);
-            }
-        }
-        if (chosen.items.len == 0) return error.SkillNotFound;
-    }
-
-    // --- act --------------------------------------------------------------
     const force = ctx.flag("--force");
     const dry_run = ctx.flag("--dry-run");
     var results: std.ArrayList(InstallOutcome) = .empty;
@@ -1182,6 +1290,13 @@ fn listFound(ctx: *Context, source: []const u8, found: []const install.Found) vo
         found.len,
         if (found.len == 1) "" else "s",
     }) catch "");
+    // A source holding more than one skill is exactly the case where the next
+    // question is "which ones?", and `--list` is where someone looks to find
+    // out. Only on a terminal: a script reading this output should not have to
+    // step over a sentence addressed to a human.
+    if (found.len > 1 and interactive(ctx)) {
+        o.writeAll("  pick with --skill <name>, or drop --list to choose interactively\n");
+    }
     o.writeAll(term.RESET);
 }
 
@@ -1809,6 +1924,8 @@ fn cmdHelp(ctx: *Context) !void {
     o.writeAll(style.FAINT);
     o.writeAll("  flags:  -g/--global  -p/--project  -a/--agent <key>  --json  --root <dir>\n");
     o.writeAll("          install:  --skill <name>  -l/--list  --all  --force  --dry-run  --ref <ref>\n");
-    o.writeAll("                    --yes skips the destination prompt (auto-detect)\n");
+    o.writeAll("                    a source holding several skills asks which ones; --skill <name>\n");
+    o.writeAll("                    (repeatable) or --skill '*' answers that without asking\n");
+    o.writeAll("                    --yes installs every skill to the auto-detected destinations\n");
     o.writeAll(term.RESET);
 }

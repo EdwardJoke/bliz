@@ -11,7 +11,7 @@ per-version links will be added as releases are tagged.
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-09-25
+## [0.4.1] - 2026-09-26
 
 ### Added
 
@@ -20,9 +20,29 @@ per-version links will be added as releases are tagged.
   `docs/SKILLS.md` marks writable. Its pre-rename `~/.deepseek/skills` is a *read*
   fallback for installations that upgraded in place, so it is not mapped as a
   second destination: one write to the current path is read by both.
+- **Choosing which skills to install.** A source holding more than one skill now
+  asks which ones, and asks *before* the destination prompt — "what" reads before
+  "where", and an answer about destinations would be thrown away by a cancel.
+  Nothing is pre-checked, which is the choice the reference makes too: a fully
+  ticked list turns "install this one" into "undo twenty-nine". `Select all` takes
+  every skill the filter matches, the filter narrows the list, and a name that
+  matches nothing stays an error rather than a shorter list. `-s/--skill` and
+  `--all` answer the question without asking it; `--yes`, `--json` and a run with
+  no terminal install every skill, as they always did. `-a` is not a blanket — it
+  answers "where", not "what" — so the skill prompt still opens, which is the line
+  the reference draws when its non-TTY message asks for `--agent` *and* `-y`.
+- `-l/--list` names `--skill` on a terminal, since a source holding several skills
+  is exactly the case where the next question is "which ones, and how do I say so".
 
 ### Fixed
 
+- The picker's detail pane was cached on the cursor position alone, and a space
+  toggles rows *without* moving the cursor — so the count under a group heading
+  went stale the instant anything was ticked, leaving a frame that read
+  `6 skills · 0 selected` directly above a heading reading `3/6` and a summary
+  naming all three. The selection count now joins the cache key, but only while
+  the cursor is on a group heading, so an ordinary row's detail is not rebuilt —
+  and re-faded — on every keystroke.
 - The destination picker's count assertion accepted either `1 of 58 destinations`
   or `1 of 57 destinations`. The real answer is 57, so the second alternative was
   dead code that would have passed for the wrong reason the moment the registry

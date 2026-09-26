@@ -241,6 +241,26 @@ class Harness:
     def start(self, *args):
         return Session([self.binary, "install", *args], self.project, self.home)
 
+    def take_every_skill(self, s, then_destination=True):
+        """Walks past the skill prompt by taking the whole source.
+
+        The fixture source holds two skills, so a bare install now asks which
+        ones first — the same order the reference asks in. Most cases below are
+        about *where* a skill goes, so they take everything and get on with it;
+        the skill prompt has cases of its own further down.
+
+        The cursor opens on the "Select all" row, so one space takes the lot.
+        """
+        if not s.wait_for("Select skills to install"):
+            raise Failure("the skill prompt never opened")
+        s.send(" ")             # the cursor starts on "Select all"
+        s.send("\r")
+        # `-a` answers the destination question outright, so there is no second
+        # prompt to wait for.
+        if then_destination and not s.wait_for("Install to"):
+            raise Failure("the destination prompt never opened")
+        return s
+
     def check(self, label, cond, detail=""):
         if cond:
             self.passed += 1
@@ -265,7 +285,7 @@ class Harness:
         print("\nthe prompt lays out at the size the terminal actually is")
         prune_tree(self.project)
         s = self.start(self.source)
-        s.wait_for("Install to")
+        self.take_every_skill(s)
         s.send(" ")
         s.wait_for("Not installed")
         drawn = s.frame()
@@ -298,7 +318,8 @@ class Harness:
         print("the destination prompt opens for a bare install")
         prune_tree(self.project)
         s = self.start(self.source)
-        opened = s.wait_for("Install to")
+        self.take_every_skill(s)
+        opened = True
         self.dump(s)
         screen = s.screen()
         s.send("\x1b")  # esc
@@ -316,7 +337,7 @@ class Harness:
         print("\na bare ↵ installs to the pre-checked destinations")
         prune_tree(self.project)
         s = self.start(self.source)
-        s.wait_for("Install to")
+        self.take_every_skill(s)
         s.send("\r")
         code = s.wait()
         self.dump(s)
@@ -330,7 +351,7 @@ class Harness:
         print("\nthe prompt can install to one chosen agent and nothing else")
         prune_tree(self.project)
         s = self.start(self.source)
-        s.wait_for("Install to")
+        self.take_every_skill(s)
 
         # Filter down to Windsurf and check it.
         s.send("windsurf")
@@ -363,7 +384,8 @@ class Harness:
         prune_tree(self.project)
         prune_tree(self.home)
         s = self.start(self.source)
-        opened = s.wait_for("Install to")
+        self.take_every_skill(s)
+        opened = True
         first = s.screen()
         self.dump(s)
 
@@ -407,7 +429,7 @@ class Harness:
         prune_tree(self.project)
         prune_tree(self.home)
         s = self.start(self.source, "-g")
-        s.wait_for("Install to")
+        self.take_every_skill(s)
         first = s.screen()
         self.dump(s)
         # One scope is not a choice, so there is no switch to draw — and the
@@ -438,7 +460,7 @@ class Harness:
         prune_tree(self.project)
         prune_tree(self.home)
         s = self.start(self.source)
-        s.wait_for("Install to")
+        self.take_every_skill(s)
 
         s.send(" ")             # project -> global
         s.wait_for("Not installed")
@@ -469,7 +491,7 @@ class Harness:
         print("\nthe filter finds an agent that shares another agent's directory")
         prune_tree(self.project)
         s = self.start(self.source)
-        s.wait_for("Install to")
+        self.take_every_skill(s)
 
         # `.agents/skills` is one row labelled after the *first* agent that uses
         # it, so a user who thinks in terms of Codex would otherwise never find
@@ -485,6 +507,123 @@ class Harness:
         self.check("the filter reports a single match", "1 match" in s.screen(), screen[-600:])
         self.check("the shared destination is named", ".agents/skills" in s.screen())
 
+    # ------------------------------------------------------- the skill prompt
+
+    def case_skill_prompt_appears(self):
+        print("a source holding several skills asks which ones before anything is copied")
+        prune_tree(self.project)
+        s = self.start(self.source)
+        opened = s.wait_for("Select skills to install")
+        first = s.screen()
+        self.dump(s)
+        s.send("\x1b")  # esc
+        code = s.wait()
+        s.close()
+
+        self.check("the skill prompt painted before any key was sent", opened, first[:900])
+        self.check("both skills of the source are offered",
+                   "alpha" in first and "beta" in first, first[:900])
+        self.check("the heading names the source, not a scope",
+                   "In this source" in first, first[:900])
+        self.check("the footer counts skills, not destinations",
+                   "2 skills" in first, first[:900])
+        # The reference opens with nothing ticked, and so does this: choosing one
+        # of thirty must not mean undoing twenty-nine first.
+        self.check("nothing is pre-checked", "0/2" in first, first[:900])
+        self.check("the summary asks for a choice, in the right noun",
+                   "pick at least one skill" in first, first[:1200])
+        self.check("the destination prompt is never reached", "Install to" not in first)
+        self.check("escape installs nothing", code != 0 and not has(self.project, ".agents"))
+
+    def case_skill_prompt_picks_one(self):
+        print("\none row can be picked out of a source, and only that one is copied")
+        prune_tree(self.project)
+        s = self.start(self.source)
+        s.wait_for("Select skills to install")
+        # The list is [Select all][heading][alpha][beta]. One ↓ lands on the
+        # heading, where a space would take the whole group, so the first skill
+        # is two down.
+        s.send("\x1b[B")
+        s.send("\x1b[B")
+        s.send(" ")
+        s.send("\r")
+        s.wait_for("Install to")
+        s.send("\r")
+        code = s.wait()
+        self.dump(s)
+        s.close()
+
+        self.check("exit code is 0", code == 0, f"exit={code}")
+        found = skills_in(self.project, ".agents", "skills")
+        self.check("only the picked skill landed", found == {"alpha"}, str(found))
+
+    def case_skill_prompt_filters(self):
+        print("\ntyping narrows the skills on offer")
+        prune_tree(self.project)
+        s = self.start(self.source)
+        s.wait_for("Select skills to install")
+        s.send("beta")
+        narrowed = s.screen()
+        s.send(" ")             # a filter change parks the cursor on one row
+        s.send("\r")
+        s.wait_for("Install to")
+        s.send("\r")
+        code = s.wait()
+        self.dump(s)
+        s.close()
+
+        self.check("the heading reports the filtered count",
+                   "1 of 2 skills" in narrowed, narrowed[-900:])
+        self.check("exit code is 0", code == 0, f"exit={code}")
+        found = skills_in(self.project, ".agents", "skills")
+        self.check("only the match was copied", found == {"beta"}, str(found))
+
+    def case_skill_prompt_select_all(self):
+        print("\nSelect all at the skill prompt takes the whole source")
+        prune_tree(self.project)
+        s = self.start(self.source)
+        s.wait_for("Select skills to install")
+        s.send(" ")             # the cursor opens on "Select all"
+        checked = s.screen()
+        s.send("\r")
+        s.wait_for("Install to")
+        s.send("\r")
+        code = s.wait()
+        self.dump(s)
+        s.close()
+
+        self.check("the counter reports every skill checked", "2/2" in checked, checked[-900:])
+        self.check("exit code is 0", code == 0, f"exit={code}")
+        found = skills_in(self.project, ".agents", "skills")
+        self.check("both skills landed", found == {"alpha", "beta"}, str(found))
+
+    def case_skill_flag_skips_the_prompt(self):
+        print("\n-s names the skill outright, so nothing is asked")
+        prune_tree(self.project)
+        s = self.start(self.source, "-s", "beta", "--yes")
+        code = s.wait()
+        self.dump(s)
+        s.close()
+
+        self.check("exit code is 0", code == 0, f"exit={code}")
+        self.check("the skill prompt was never drawn",
+                   "Select skills to install" not in s.screen())
+        found = skills_in(self.project, ".agents", "skills")
+        self.check("only the named skill was copied", found == {"beta"}, str(found))
+
+    def case_skill_unknown_name_is_an_error(self):
+        print("\n-s with a name that matches nothing fails rather than copying less")
+        prune_tree(self.project)
+        s = self.start(self.source, "-s", "nope", "--yes")
+        code = s.wait()
+        out = s.screen()
+        self.dump(s)
+        s.close()
+
+        self.check("exit code is non-zero", code != 0, f"exit={code}")
+        self.check("the offending name is reported", "no skill named nope" in out, out[-500:])
+        self.check("nothing was installed", not has(self.project, ".agents"))
+
     def case_yes_skips_prompt(self):
         print("\n--yes skips the prompt entirely")
         prune_tree(self.project)
@@ -494,20 +633,26 @@ class Harness:
         s.close()
 
         self.check("exit code is 0", code == 0, f"exit={code}")
-        self.check("no prompt was drawn", "Install to" not in s.screen())
+        self.check("neither prompt was drawn",
+                   "Install to" not in s.screen() and "Select skills to install" not in s.screen())
         found = skills_in(self.project, ".agents", "skills")
-        self.check("auto-detect still installed to the hub", found == {"alpha", "beta"}, str(found))
+        self.check("auto-detect still installed every skill to the hub", found == {"alpha", "beta"}, str(found))
 
     def case_explicit_flag_wins(self):
-        print("\n-a bypasses the prompt and targets exactly that agent")
+        print("\n-a answers where, so it bypasses the destination prompt but not the skill one")
         prune_tree(self.project)
         s = self.start(self.source, "-a", "windsurf")
+        # `-a` says nothing about which skills, so the skill prompt still
+        # opens — the reference needs `-y` alongside `--agent` for the same
+        # reason, and says so in its own non-TTY message.
+        self.take_every_skill(s, then_destination=False)
         code = s.wait()
         self.dump(s)
         s.close()
 
         self.check("exit code is 0", code == 0, f"exit={code}")
-        self.check("no prompt was drawn", "Install to" not in s.screen())
+        self.check("the destination prompt was skipped",
+                   "Install to" not in s.screen())
         windsurf = skills_in(self.project, ".windsurf", "skills")
         self.check("skills landed only in .windsurf", windsurf == {"alpha", "beta"}, str(windsurf))
         self.check("the hub was left alone", not has(self.project, ".agents"))
@@ -526,7 +671,8 @@ class Harness:
             timeout=30,
         )
         self.check("exit code is 0", proc.returncode == 0, f"exit={proc.returncode}")
-        self.check("no prompt was drawn", "Install to" not in proc.stdout)
+        self.check("neither prompt was drawn",
+                   "Install to" not in proc.stdout and "Select skills to install" not in proc.stdout)
         found = skills_in(self.project, ".agents", "skills")
         self.check("installed to the hub", found == {"alpha", "beta"}, str(found))
 
@@ -571,6 +717,12 @@ def main():
             h.case_prompt_appears,
             h.case_accept_defaults,
             h.case_pick_only_another,
+            h.case_skill_prompt_appears,
+            h.case_skill_prompt_picks_one,
+            h.case_skill_prompt_filters,
+            h.case_skill_prompt_select_all,
+            h.case_skill_flag_skips_the_prompt,
+            h.case_skill_unknown_name_is_an_error,
             h.case_scope_switch_is_visible,
             h.case_global_flag_installs_into_home,
             h.case_cross_scope_install,

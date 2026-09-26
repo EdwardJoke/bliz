@@ -179,9 +179,97 @@ bliz install ./my-local-skills                     # a local directory
 | `--all` | every skill to every agent |
 | `--force` | replace skills that are already installed |
 | `--dry-run` | print the plan and change nothing |
-| `--yes` | skip the destination prompt and use auto-detection |
+| `--yes` | skip both prompts: every skill, to the auto-detected destinations |
 | `--ref <ref>` | branch, tag or commit to check out |
 | `--json` | machine-readable result, one object per (skill, destination) |
+
+### Choosing which skills
+
+A repository that holds one skill installs it and says nothing. A repository
+that holds thirty — which is the normal shape of a skill collection — asks
+which ones, because "install everything it can find" is not an answer anyone
+chose. The question comes *before* the destination one: "what" reads before
+"where", and an answer about destinations would be thrown away by a cancel.
+Both captures below are real 80×24 frames:
+
+```
+◆  Select skills to install                                         agent-skills
+│                                                                               
+│  ⌕ type to filter▏                                                   6 matches
+│  ↑↓ move   space select   tab next   ↵ install   esc cancel                   
+│                                                                               
+│ ❯    ○ Select all                                                          0/6
+│  ─────────────────────────────────────────────────────────────────────────────
+│   ▾  ○ In this source  6 skills                                               
+│   ├─ ○ api-contract-tests                            skills/api-contract-tests
+│   ├─ ○ code-review                                          skills/code-review
+│   ├─ ○ css-architecture                                skills/css-architecture
+│   ├─ ○ find-skills                                          skills/find-skills
+│   ├─ ○ release-notes                                      skills/release-notes
+│   └─ ○ typescript-strict                              skills/typescript-strict
+│                                                                               
+│                                                                               
+│                                                                               
+│  Select all                                                                   
+│  Toggles every skill the filter currently matches.                            
+│                                                                               
+│                                                                               
+│  Selection  none — pick at least one skill                                    
+└                                                                       6 skills
+```
+
+**Nothing is pre-checked, and that is the point** — the same choice the
+reference makes. A list that opens fully ticked turns "install this one" into
+"undo twenty-nine", and the honest default for a thirty-skill collection is
+that you have not chosen yet. Submitting with nothing ticked nudges instead of
+proceeding, so an empty selection is not reachable. `Select all` is the one
+keystroke back the other way, and the filter composes with it:
+
+```
+◆  Select skills to install                                         agent-skills
+│                                                                               
+│  ⌕ re▏                                                               3 matches
+│  ↑↓ move   space select   tab next   ↵ install   esc cancel                   
+│                                                                               
+│      ● Select all                                                          3/6
+│  ─────────────────────────────────────────────────────────────────────────────
+│ ❯ ▾  ◑ In this source  3 of 6 skills                                       3/6
+│   ├─ ● code-review                                          skills/code-review
+│   ├─ ● css-architecture                                skills/css-architecture
+│   └─ ● release-notes                                      skills/release-notes
+│                                                                               
+│                                                                               
+│                                                                               
+│                                                                               
+│                                                                               
+│                                                                               
+│  Skill  group                                                                 
+│  6 skills · 3 selected — space toggles a row, Select all takes every skill    
+│  the filter matches.                                                          
+│                                                                               
+│  Selection  code-review, css-architecture, release-notes                      
+└                                                                       6 skills
+```
+
+Naming a skill skips the question entirely, which is what makes the thing
+scriptable:
+
+```sh
+bliz install owner/repo --skill code-review        # just that one
+bliz install owner/repo -s code-review -s release-notes
+bliz install owner/repo --skill '*'                # everything, silently
+bliz install owner/repo --yes                      # every skill, auto-detected destinations
+```
+
+A name that matches nothing is an error rather than a shorter list, so a typo
+cannot quietly install less than was asked for. `-l/--list` prints the
+inventory and, on a terminal, names the flag that narrows it.
+
+`--all` and `-s '*'` both mean every skill, and `--yes` is the blanket "stop
+asking": with no terminal, or with `--yes`, or with `--json`, every skill is
+installed and the report names them. `-a` is *not* a blanket — it answers
+"where", not "what", so the skill prompt still opens. (The reference draws the
+same line: its non-TTY message asks for `--agent` *and* `-y`.)
 
 ### Choosing where it goes
 
@@ -371,10 +459,10 @@ Each module has one job. The dependency order runs top to bottom:
 | `discover.zig` | 420 | root discovery and skill scanning |
 | `install.zig` | 629 | source parsing, `git` fetching, skill discovery in a source, tree copy |
 | `tui.zig` | 1569 | the skill multiselect: scan, filter, groups, animation, rendering |
-| `pick.zig` | 2342 | the destination picker: candidates, scope tabs, merge, filter, animation, rendering |
+| `pick.zig` | 2481 | the multi-select picker: candidates, merge, scope tabs, filter, animation, rendering |
 | `script.zig` | 102 | the `record` keystroke-script mini-language |
 | `record.zig` | 323 | deterministic frame capture for the web player |
-| `main.zig` | 1814 | CLI dispatch and command implementations |
+| `main.zig` | 1931 | CLI dispatch and command implementations |
 
 ### The rendering contract
 
@@ -498,15 +586,17 @@ written — because a recording never takes the interactive path at all. So the
 install prompt gets driven for real, under a PTY:
 
 ```sh
-python3 demo/verify-install.py          # 50 checks
+python3 demo/verify-install.py          # 72 checks
 python3 demo/verify-install.py -v       # dump the captured screen
 ```
 
-It builds a throwaway project and source, points `HOME` at a temp directory so
-detection cannot see the developer's own config, and then sends real keystrokes:
-accept the defaults, filter and select a different agent, cancel with `esc`,
-switch scope and install globally, take a destination on each scope and install
-to both, `-g`, `-a`, and a non-TTY pipe.
+It builds a throwaway project and a source holding two skills, points `HOME` at
+a temp directory so detection cannot see the developer's own config, and then
+sends real keystrokes: pick one skill out of the source, filter the skills and
+take the match, accept the destination defaults, filter and select a different
+agent, cancel with `esc` at either prompt, switch scope and install globally,
+take a destination on each scope and install to both, `-g`, `-a`, `-s`, and a
+non-TTY pipe.
 
 Each case is judged by what landed on disk, including that a deselected
 destination was left *untouched* — the assertion that catches "it installed to

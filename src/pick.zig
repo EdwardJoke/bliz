@@ -53,6 +53,57 @@ pub const Options = struct {
     /// Force a layout size instead of reading the terminal (used by `record`).
     force_cols: usize = 0,
     force_rows: usize = 0,
+    /// The words this prompt uses for the thing it is picking.
+    words: Words = .{},
+};
+
+/// The nouns and sentences the prompt says about the thing it is picking.
+///
+/// The prompt was written for *destinations* — the directories an install
+/// writes into — so that is what every default here says, and a caller picking
+/// something else replaces them. Skills are the second caller: the two
+/// decisions want the same affordances (a filter, a select-all, a per-row
+/// detail pane, the same frame arithmetic and repaint protocol), so they share
+/// one widget with two vocabularies rather than two widgets kept in step by
+/// hand.
+///
+/// A field left empty means "work it out", which is how the two derived
+/// strings — the group heading and its detail sentence — keep their
+/// scope-dependent destination wording.
+pub const Words = struct {
+    /// Detail-pane heading while the cursor is on a row.
+    row_heading: []const u8 = "Destination",
+    /// Singular noun for every count. Pluralised with a plain `s`, which is
+    /// why the two must stay in step: a noun whose plural is not `noun + "s"`
+    /// would need this split in two.
+    count_noun: []const u8 = "destination",
+    /// Heading of a group. Empty derives it from the scope and whether the
+    /// group's rows already exist.
+    group_heading: []const u8 = "",
+    /// Detail-pane sentence under a group heading. Empty derives it.
+    group_detail: []const u8 = "",
+    /// Detail pane while the cursor is on the "Select all" row.
+    select_all_detail: []const u8 = "Toggles every destination the filter currently matches.",
+    /// Summary line while nothing is checked.
+    none_summary: []const u8 = "Selection  none — pick at least one destination",
+    /// Drawn in place of the list when the filter matches nothing.
+    no_match: []const u8 = "no agent matches that filter",
+    /// The key hints under the search box. Empty picks the built-in variant.
+    hints: []const u8 = "",
+};
+
+/// The skill prompt's vocabulary: `bliz install <source>` choosing which
+/// skills to copy out of a source that holds several.
+pub const skill_words = Words{
+    .row_heading = "Skill",
+    .count_noun = "skill",
+    .group_heading = "In this source",
+    .group_detail = "— space toggles a row, Select all takes every skill the filter matches.",
+    .select_all_detail = "Toggles every skill the filter currently matches.",
+    .none_summary = "Selection  none — pick at least one skill",
+    .no_match = "no skill matches that filter",
+    // One group, so the `←→ group` clause in the default has nothing to do.
+    .hints = "↑↓ move   space select   tab next   ↵ install   esc cancel",
 };
 
 /// Where a destination lives. Project is the current checkout; global is the
@@ -90,6 +141,12 @@ pub const Item = struct {
     default_on: bool,
     /// Which half of the view this row belongs to.
     scope: Scope,
+    /// Detail-pane text for this row, replacing the destination composition
+    /// below. One flowing string, not lines: the pane wraps it to the terminal
+    /// and a newline would only be re-flowed away. Empty means "compose it
+    /// from `root`, `agents` and `detected`", which is what every destination
+    /// row does.
+    detail: []const u8 = "",
 };
 
 /// A registry agent and its resolved destination, before merging.
@@ -266,6 +323,16 @@ pub const Prompt = struct {
     /// key because the wrap width derives from `cols`, so a resize has to
     /// invalidate it even though the cursor has not moved.
     detail_cols: usize = 0,
+    /// Selection count the cached detail was built from — part of the cache key
+    /// only while the cursor is on a *group* heading, which is the one detail
+    /// that reports it. A space toggles rows without moving the cursor, so
+    /// keyed on the cursor alone the pane went on saying "0 selected" while the
+    /// heading above it said "3/6" and the summary named the three.
+    ///
+    /// Deliberately not the raw count for every row: that would rebuild — and
+    /// re-fade — an item's detail on every keystroke, even though its text does
+    /// not depend on the selection at all.
+    detail_sel: usize = 0,
     detail_valid: bool = false,
     detail_cache: [max_detail][]const u8 = .{ "", "", "" },
     detail_kind: Kind = .item,
@@ -491,6 +558,11 @@ pub const Prompt = struct {
     /// fact stated two different ways, and getting it wrong makes the heading
     /// lie about where the rows are.
     fn groupLabel(self: *Prompt, detected: bool) []const u8 {
+        // A caller with a single group — the skill prompt has one, because a
+        // skill is either in the source or is not — names it outright; the
+        // destination prompt names it per scope and per whether the directory
+        // already exists.
+        if (self.opts.words.group_heading.len > 0) return self.opts.words.group_heading;
         return switch (self.activeScope()) {
             .project => if (detected) "In this project" else "Not here yet",
             .global => if (detected) "Installed" else "Not installed",
@@ -1194,7 +1266,9 @@ pub const Prompt = struct {
             self.rail();
             self.row.add("  ");
             self.row.add(style.mixAt(&self.scratch_a, 238, 242, 0.9));
-            self.row.add(if (self.showScopeRow())
+            self.row.add(if (self.opts.words.hints.len > 0)
+                self.opts.words.hints
+            else if (self.showScopeRow())
                 "↑↓ move   space select   ←→ group/scope   tab next   ↵ install   esc cancel"
             else
                 "↑↓ move   space select   ←→ group   tab next   ↵ install   esc cancel");
@@ -1379,7 +1453,7 @@ pub const Prompt = struct {
             self.rail();
             self.row.add("  ");
             self.row.add(style.mixAt(&self.scratch_a, 240, 245, alpha));
-            self.row.add("no agent matches that filter");
+            self.row.add(self.opts.words.no_match);
             self.row.add(term.RESET);
             self.emitRow("", style.DIM, 0);
             var k: usize = 1;
@@ -1491,10 +1565,11 @@ pub const Prompt = struct {
         // When a filter is hiding most of the group, the count on the heading
         // has to be the number of rows actually below it, not the group size —
         // otherwise a heading reading "58 destinations" sits above a single row.
+        const noun = self.opts.words.count_noun;
         if (group.items.len < group.total) {
-            self.row.addFmt("{d} of {d} destinations", .{ group.items.len, group.total });
+            self.row.addFmt("{d} of {d} {s}s", .{ group.items.len, group.total, noun });
         } else {
-            self.row.addFmt("{d} destination{s}", .{ group.total, if (group.total == 1) "" else "s" });
+            self.row.addFmt("{d} {s}{s}", .{ group.total, noun, if (group.total == 1) "" else "s" });
         }
         self.row.add(term.RESET);
 
@@ -1515,7 +1590,7 @@ pub const Prompt = struct {
             // all" row explains itself instead of claiming to be a destination.
             .select_all => "Select all",
             .scope => "Scope",
-            else => "Destination",
+            else => self.opts.words.row_heading,
         });
         self.row.add(term.RESET);
         if (self.detail_kind == .group) {
@@ -1541,11 +1616,18 @@ pub const Prompt = struct {
     fn ensureDetail(self: *Prompt) void {
         // The wrap width comes from `cols`, so the width is part of the key: a
         // resize has to re-wrap even though the cursor has not moved.
+        // A space toggles rows without moving the cursor, and the only detail
+        // whose text depends on the selection belongs to a group heading — so
+        // that is the one cursor position where the count joins the key.
+        const on_group = if (self.cursorEntry()) |e| e.kind == .group else false;
+        const sel_key: usize = if (on_group) self.selectionCount() else 0;
         if (self.detail_valid and
             self.detail_key == @as(i64, @intCast(self.cursor)) and
-            self.detail_cols == self.cols) return;
+            self.detail_cols == self.cols and
+            self.detail_sel == sel_key) return;
         self.detail_key = @intCast(self.cursor);
         self.detail_cols = self.cols;
+        self.detail_sel = sel_key;
         self.detail_valid = true;
         self.detail_anim.begin(self.now);
 
@@ -1559,39 +1641,47 @@ pub const Prompt = struct {
         if (self.cursorEntry()) |entry| switch (entry.kind) {
             .item => {
                 const it = self.items[entry.item];
-                text.add(it.root);
-                text.add("\n");
-                if (it.agents.len > 1) {
-                    text.addFmt("read by {d} agents: {s}", .{ it.agents.len, it.agents[0] });
-                    var k: usize = 1;
-                    while (k < it.agents.len and k < 4) : (k += 1) {
-                        text.add(", ");
-                        text.add(it.agents[k]);
-                    }
-                    if (it.agents.len > k) text.addFmt(" +{d}", .{it.agents.len - k});
+                if (it.detail.len > 0) {
+                    text.add(it.detail);
                 } else {
-                    text.addFmt("dedicated to {s}", .{it.label});
+                    text.add(it.root);
+                    text.add("\n");
+                    if (it.agents.len > 1) {
+                        text.addFmt("read by {d} agents: {s}", .{ it.agents.len, it.agents[0] });
+                        var k: usize = 1;
+                        while (k < it.agents.len and k < 4) : (k += 1) {
+                            text.add(", ");
+                            text.add(it.agents[k]);
+                        }
+                        if (it.agents.len > k) text.addFmt(" +{d}", .{it.agents.len - k});
+                    } else {
+                        text.addFmt("dedicated to {s}", .{it.label});
+                    }
+                    text.add("\n");
+                    text.add(if (it.detected) "already in place — nothing is created" else "will be created by this install");
                 }
-                text.add("\n");
-                text.add(if (it.detected) "already in place — nothing is created" else "will be created by this install");
             },
             .group => {
                 self.detail_kind = .group;
                 const g = self.groups.items[entry.group];
-                text.addFmt("{d} destination{s} · {d} selected", .{
+                const noun = self.opts.words.count_noun;
+                text.addFmt("{d} {s}{s} · {d} selected", .{
                     g.total,
+                    noun,
                     if (g.total == 1) "" else "s",
                     self.selectionCount(),
                 });
                 text.add("\n");
-                text.add(if (g.detected)
+                text.add(if (self.opts.words.group_detail.len > 0)
+                    self.opts.words.group_detail
+                else if (g.detected)
                     "the skill lands in a directory that already exists here"
                 else
                     "a new directory is created for each destination you pick");
             },
             .select_all => {
                 self.detail_kind = .select_all;
-                text.add("Toggles every destination the filter currently matches.");
+                text.add(self.opts.words.select_all_detail);
             },
             // The scope row is the one place where the two directories are the
             // whole explanation, so the pane spells them out. It is one flowing
@@ -1635,7 +1725,7 @@ pub const Prompt = struct {
         if (n == 0) {
             self.row.add(style.mixAt(&self.scratch_a, 238, 244, alpha));
             self.row.add(if (self.opts.require_selection)
-                "Selection  none — pick at least one destination"
+                self.opts.words.none_summary
             else
                 "Selection  none");
             self.row.add(term.RESET);
@@ -1710,8 +1800,9 @@ pub const Prompt = struct {
             if (!self.items[i].detected) creating += 1;
         }
         const total = self.scopedTotal();
-        const s_count = std.fmt.bufPrint(&self.right_buf, "{d} destination{s}", .{
+        const s_count = std.fmt.bufPrint(&self.right_buf, "{d} {s}{s}", .{
             total,
+            self.opts.words.count_noun,
             if (total == 1) "" else "s",
         }) catch "";
         if (creating == 0) {
@@ -2339,4 +2430,52 @@ test "the frame is exactly cols wide with both scopes on offer" {
         p.render();
         try testing.expectEqual(@as(usize, 0), p.checkFrame().violations);
     }
+}
+
+/// True when any cached detail line contains `needle`.
+fn detailHas(p: *const Prompt, needle: []const u8) bool {
+    for (p.detail_cache) |line| {
+        if (std.mem.find(u8, line, needle) != null) return true;
+    }
+    return false;
+}
+
+test "the group detail follows the selection, not just the cursor" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/tmp/bliz-pick-test");
+
+    // Present but not pre-checked, so the count the pane reports starts at zero.
+    // Three distinct directories: agents that share one merge into a single row,
+    // which would make this a two-row group.
+    const items = try buildItems(arena, &.{
+        cand("claude-code", "Claude Code", ".claude/skills", true, false),
+        cand("codex", "Codex", ".codex/skills", true, false),
+        cand("windsurf", "Windsurf", ".windsurf/skills", true, false),
+    });
+
+    var p = Prompt.init(arena, testing.allocator, testing.io, &env, items, .{
+        .force_cols = 100,
+        .force_rows = 30,
+    }, "/tmp");
+    defer p.deinit();
+    p.now = 5000;
+
+    // One down from "Select all" is the group heading, whose detail reports how
+    // many rows beneath it are ticked.
+    p.handleInput("\x1b[B");
+    p.ensureDetail();
+    try testing.expect(detailHas(&p, "0 selected"));
+
+    // A space toggles the whole group *without moving the cursor*, so a cache
+    // keyed on the cursor alone went on saying "0 selected" while the heading
+    // beside it said "3/3" and the summary named all three.
+    p.handleInput(" ");
+    try testing.expectEqual(@as(usize, 3), p.selectionCount());
+    p.ensureDetail();
+    try testing.expect(detailHas(&p, "3 selected"));
 }
